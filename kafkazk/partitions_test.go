@@ -94,6 +94,16 @@ func testGetMapString4(n string) string {
     {"topic":"%s","partition":5,"replicas":[1002,1001]}]}`, n, n, n, n, n, n)
 }
 
+func testGetMapString5(n string) string {
+	return fmt.Sprintf(`{"version":1,"partitions":[
+    {"topic":"%s1","partition":0,"replicas":[1004,1003]},
+    {"topic":"%s1","partition":1,"replicas":[1003,1004]},
+    {"topic":"%s1","partition":2,"replicas":[1001,1002]},
+		{"topic":"%s2","partition":3,"replicas":[1003,1002]},
+		{"topic":"%s2","partition":4,"replicas":[1001,1003]},
+    {"topic":"%s2","partition":5,"replicas":[1002,1001]}]}`, n, n, n, n, n, n)
+}
+
 func TestSize(t *testing.T) {
 	z := &Mock{}
 
@@ -191,6 +201,44 @@ func TestEqual(t *testing.T) {
 	pm.Partitions[0].Replicas[0] = 1337
 	if same, _ := pm.equal(pm2); same {
 		t.Error("Unexpected equality")
+	}
+}
+
+func TestPartitionMapTopics(t *testing.T) {
+	pm, _ := PartitionMapFromString(testGetMapString5("test_topic"))
+	ts := pm.Topics()
+
+	expected := []string{"test_topic1", "test_topic2"}
+
+	for i, n := range ts {
+		if n != expected[i] {
+			t.Errorf("Expected topic '%s', got '%s'", expected[i], n)
+		}
+	}
+}
+
+func TestPartitionMapReplicaSets(t *testing.T) {
+	pm, _ := PartitionMapFromString(testGetMapString("test_topic"))
+	rs := pm.ReplicaSets("test_topic")
+
+	expected := ReplicaSets{
+		0: []int{1001, 1002},
+		1: []int{1002, 1001},
+		2: []int{1003, 1004, 1001},
+		3: []int{1004, 1003, 1002},
+	}
+
+	if len(rs) != len(expected) {
+		t.Error("Unexpected ReplicaSets len")
+	}
+
+	for i, expectedSet := range expected {
+		for j := range expectedSet {
+			if expectedSet[j] != rs[i][j] {
+				fmt.Printf("%v %v\n", expectedSet[j], rs[i][j])
+				t.Errorf("ReplicaSet mismatch")
+			}
+		}
 	}
 }
 
