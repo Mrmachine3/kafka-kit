@@ -85,7 +85,7 @@ Flags:
       --out-file string               If defined, write a combined map of all topics to a file
       --out-path string               Path to write output map files to
       --partition-size-factor float   Factor by which to multiply partition sizes when using storage placement (default 1)
-      --phased-reassignment           Created two-phase output maps
+      --phased-reassignment           Create two-phase output maps
       --placement string              Partition placement strategy: [count, storage] (default "count")
       --replication int               Normalize the topic replication factor across all replica sets (0 results in a no-op)
       --skip-no-ops                   Skip no-op partition assigments
