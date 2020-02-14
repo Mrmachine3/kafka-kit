@@ -149,6 +149,7 @@ func (zk *Mock) GetTopicConfig(t string) (*TopicConfig, error) {
 	return &TopicConfig{
 		Version: 1,
 		Config: map[string]string{
+			"retention.ms":                            "172800000",
 			"leader.replication.throttled.replicas":   "0:1001,0:1002",
 			"follower.replication.throttled.replicas": "0:1003,0:1004",
 		},
@@ -160,9 +161,10 @@ func (zk *Mock) GetAllBrokerMeta(withMetrics bool) (BrokerMetaMap, []error) {
 	b := BrokerMetaMap{
 		1001: &BrokerMeta{Rack: "a"},
 		1002: &BrokerMeta{Rack: "b"},
-		1003: &BrokerMeta{Rack: "c"},
+		1003: &BrokerMeta{Rack: ""},
 		1004: &BrokerMeta{Rack: "a"},
 		1005: &BrokerMeta{Rack: "b"},
+		1007: &BrokerMeta{Rack: ""},
 	}
 
 	if withMetrics {
@@ -184,6 +186,7 @@ func (zk *Mock) GetBrokerMetrics() (BrokerMetricsMap, error) {
 		1003: &BrokerMetrics{StorageFree: 6000.00},
 		1004: &BrokerMetrics{StorageFree: 8000.00},
 		1005: &BrokerMetrics{StorageFree: 10000.00},
+		1007: &BrokerMetrics{StorageFree: 12000.00},
 	}
 
 	return bm, nil

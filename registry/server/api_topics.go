@@ -182,9 +182,13 @@ func (s *Server) CreateTopic(ctx context.Context, req *pb.CreateTopicRequest) (*
 		return empty, err
 	}
 
-	// Tag the topic.
-	reqParams.Tag = TagSet(req.Topic.Tags).Tags()
-	_, err = s.TagTopic(ctx, reqParams)
+	// Tag the topic. It's possible that we get a non-nil
+	// but empty Tags parameter. In this case, we simply return.
+	tags := TagSet(req.Topic.Tags).Tags()
+	if len(tags) > 0 {
+		reqParams.Tag = tags
+		_, err = s.TagTopic(ctx, reqParams)
+	}
 
 	return empty, err
 }
@@ -340,13 +344,24 @@ func (s *Server) fetchTopicSet(req *pb.TopicRequest) (TopicSet, error) {
 
 	// Populate all topics.
 	for _, t := range topics {
-		s, _ := s.ZK.GetTopicState(t)
+		st, _ := s.ZK.GetTopicState(t)
+		c, err := s.ZK.GetTopicConfig(t)
+		if err != nil {
+			switch err.(type) {
+			case kafkazk.ErrNoNode:
+				c = &kafkazk.TopicConfig{}
+				c.Config = map[string]string{}
+			default:
+				return nil, err
+			}
+		}
 		matched[t] = &pb.Topic{
 			Name:       t,
-			Partitions: uint32(len(s.Partitions)),
+			Partitions: uint32(len(st.Partitions)),
 			// TODO more sophisticated check than the
 			// first partition len.
-			Replication: uint32(len(s.Partitions["0"])),
+			Replication: uint32(len(st.Partitions["0"])),
+			Configs:     c.Config,
 		}
 	}
 
