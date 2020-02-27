@@ -24,36 +24,38 @@ var (
 	// Config holds configuration
 	// parameters.
 	Config struct {
-		APIKey           string
-		AppKey           string
-		NetworkTXQuery   string
-		BrokerIDTag      string
-		MetricsWindow    int
-		ZKAddr           string
-		ZKPrefix         string
-		Interval         int
-		APIListen        string
-		ConfigZKPrefix   string
-		DDEventTags      string
-		MinRate          float64
-		MaxRate          float64
-		ChangeThreshold  float64
-		FailureThreshold int
-		CapMap           map[string]float64
-		CleanupAfter     int64
+		APIKey             string
+		AppKey             string
+		NetworkTXQuery     string
+		NetworkRXQuery     string
+		BrokerIDTag        string
+		MetricsWindow      int
+		ZKAddr             string
+		ZKPrefix           string
+		Interval           int
+		APIListen          string
+		ConfigZKPrefix     string
+		DDEventTags        string
+		MinRate            float64
+		MaxRate            float64
+		SourceMaxRate      float64
+		DestinationMaxRate float64
+		ChangeThreshold    float64
+		FailureThreshold   int
+		CapMap             map[string]float64
+		CleanupAfter       int64
 	}
 
 	// Misc.
 	topicsRegex = []*regexp.Regexp{regexp.MustCompile(".*")}
 )
 
-func init() {
-	// log.SetOutput(ioutil.Discard)
-
+func main() {
 	v := flag.Bool("version", false, "version")
 	flag.StringVar(&Config.APIKey, "api-key", "", "Datadog API key")
 	flag.StringVar(&Config.AppKey, "app-key", "", "Datadog app key")
 	flag.StringVar(&Config.NetworkTXQuery, "net-tx-query", "avg:system.net.bytes_sent{service:kafka} by {host}", "Datadog query for broker outbound bandwidth by host")
+	flag.StringVar(&Config.NetworkRXQuery, "net-rx-query", "avg:system.net.bytes_rcvd{service:kafka} by {host}", "Datadog query for broker outbound bandwidth by host")
 	flag.StringVar(&Config.BrokerIDTag, "broker-id-tag", "broker_id", "Datadog host tag for broker ID")
 	flag.IntVar(&Config.MetricsWindow, "metrics-window", 120, "Time span of metrics required (seconds)")
 	flag.StringVar(&Config.ZKAddr, "zk-addr", "localhost:2181", "ZooKeeper connect string (for broker metadata or rebuild-topic lookups)")
@@ -63,7 +65,8 @@ func init() {
 	flag.StringVar(&Config.ConfigZKPrefix, "zk-config-prefix", "autothrottle", "ZooKeeper prefix to store autothrottle configuration")
 	flag.StringVar(&Config.DDEventTags, "dd-event-tags", "", "Comma-delimited list of Datadog event tags")
 	flag.Float64Var(&Config.MinRate, "min-rate", 10, "Minimum replication throttle rate (MB/s)")
-	flag.Float64Var(&Config.MaxRate, "max-rate", 90, "Maximum replication throttle rate (as a percentage of available capacity)")
+	flag.Float64Var(&Config.SourceMaxRate, "max-tx-rate", 90, "Maximum outbound replication throttle rate (as a percentage of available capacity)")
+	flag.Float64Var(&Config.DestinationMaxRate, "max-rx-rate", 90, "Maximum inbound replication throttle rate (as a percentage of available capacity)")
 	flag.Float64Var(&Config.ChangeThreshold, "change-threshold", 10, "Required change in replication throttle to trigger an update (percent)")
 	flag.IntVar(&Config.FailureThreshold, "failure-threshold", 1, "Number of iterations that throttle determinations can fail before reverting to the min-rate")
 	m := flag.String("cap-map", "", "JSON map of instance types to network capacity in MB/s")
@@ -86,9 +89,7 @@ func init() {
 			os.Exit(1)
 		}
 	}
-}
 
-func main() {
 	log.Println("Autothrottle Running")
 	// Lazily prevent a tight restart
 	// loop from thrashing ZK.
@@ -118,6 +119,7 @@ func main() {
 		APIKey:         Config.APIKey,
 		AppKey:         Config.AppKey,
 		NetworkTXQuery: Config.NetworkTXQuery,
+		NetworkRXQuery: Config.NetworkRXQuery,
 		BrokerIDTag:    Config.BrokerIDTag,
 		MetricsWindow:  Config.MetricsWindow,
 	})
@@ -143,8 +145,8 @@ func main() {
 		tags:        tags,
 	}
 
-	// Default to true on startup in case throttles were set in
-	// an autothrottle session other than the current one.
+	// Default to true on startup in case throttles were set in  an autothrottle
+	// process other than the current one.
 	knownThrottles := true
 
 	var reassignments kafkazk.Reassignments
@@ -152,12 +154,10 @@ func main() {
 	var replicatingNow map[string]struct{}
 	var done []string
 
-	// Params for the updateReplicationThrottle
-	// request.
+	// Params for the updateReplicationThrottle request.
 
 	newLimitsConfig := NewLimitsConfig{
 		Minimum:     Config.MinRate,
-		Maximum:     Config.MaxRate,
 		CapacityMap: Config.CapMap,
 	}
 
@@ -167,12 +167,12 @@ func main() {
 	}
 
 	throttleMeta := &ReplicationThrottleConfigs{
-		zk:               zk,
-		km:               km,
-		events:           events,
-		appliedThrottles: make(map[int]float64),
-		limits:           lim,
-		failureThreshold: Config.FailureThreshold,
+		zk:                     zk,
+		km:                     km,
+		events:                 events,
+		previouslySetThrottles: make(replicationCapacityByBroker),
+		limits:                 lim,
+		failureThreshold:       Config.FailureThreshold,
 	}
 
 	overridePath := fmt.Sprintf("/%s/%s", apiConfig.ZKPrefix, apiConfig.RateSetting)
@@ -193,8 +193,8 @@ func main() {
 			replicatingNow[t] = struct{}{}
 		}
 
-		// Check for topics that were previously seen
-		// replicating, but are no longer in this interval.
+		// Check for topics that were previously seen replicating, but are no
+		// longer in this interval.
 		done = done[:0]
 		for t := range replicatingPreviously {
 			if _, replicating := replicatingNow[t]; !replicating {
@@ -222,8 +222,7 @@ func main() {
 			log.Println(err)
 		}
 
-		// If topics are being reassigned, update
-		// the replication throttle.
+		// If topics are being reassigned, update the replication throttle.
 		if len(throttleMeta.topics) > 0 {
 			log.Printf("Topics with ongoing reassignments: %s\n", throttleMeta.topics)
 
@@ -256,8 +255,7 @@ func main() {
 				}
 			}
 
-			// Remove any configured throttle overrides
-			// if AutoRemove is true.
+			// Remove any configured throttle overrides if AutoRemove is true.
 			if overrideCfg.AutoRemove {
 				err := setThrottleOverride(zk, overridePath, ThrottleOverrideConfig{})
 				if err != nil {
