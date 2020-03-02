@@ -233,7 +233,7 @@ func main() {
 		// of the previously replicating topics, we can stop updating
 		// the Kafka topic throttled replicas list. This minimizes
 		// state that must be propagated through the cluster.
-		if replicationNow.isSubSetOf(replicatingPreviously) {
+		if replicatingNow.isSubSetOf(replicatingPreviously) {
 			throttleMeta.DisableTopicUpdates()
 		} else {
 			throttleMeta.DisableTopicUpdates()
